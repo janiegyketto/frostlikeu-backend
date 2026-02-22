@@ -196,6 +196,7 @@ async function getSpotifyNowPlaying() {
 // ========== STEAM ==========
 async function getSteamStatus() {
     try {
+        // Lekérjük a játékos adatait (itt van a jelenlegi játék!)
         const response = await axios.get(
             `http://api.steampowered.com/ISteamUser/GetPlayerSummaries/v0002/`,
             {
@@ -208,36 +209,83 @@ async function getSteamStatus() {
         
         const player = response.data.response.players[0];
         
-        const gamesResponse = await axios.get(
-            `http://api.steampowered.com/IPlayerService/GetRecentlyPlayedGames/v0001/`,
-            {
-                params: {
-                    key: CONFIG.steam.apiKey,
-                    steamid: CONFIG.steam.steamId,
-                    count: 1
-                }
-            }
-        );
+        // Státusz konvertálása
+        let status = 'offline';
+        let statusText = 'Offline';
         
-        const games = gamesResponse.data.response;
-        const currentGame = games.total_count > 0 ? games.games[0] : null;
-        
-        let gameInfo = null;
-        if (currentGame) {
-            gameInfo = {
-                name: currentGame.name,
-                playtime: Math.floor(currentGame.playtime_forever / 60)
-            };
+        // personastate: 0 - offline, 1 - online, 2 - elfoglalt, 3 - távollévő, 4 - alvó, 5 - szeretne játszani, 6 - szeretne játszani
+        switch(player.personastate) {
+            case 1:
+                status = 'online';
+                statusText = 'Online';
+                break;
+            case 2:
+                status = 'busy';
+                statusText = 'Elfoglalt';
+                break;
+            case 3:
+                status = 'away';
+                statusText = 'Távol';
+                break;
+            case 4:
+                status = 'snooze';
+                statusText = 'Alvó';
+                break;
+            case 5:
+            case 6:
+                status = 'looking';
+                statusText = 'Szeretne játszani';
+                break;
+            default:
+                status = 'offline';
+                statusText = 'Offline';
         }
         
-        console.log('✅ Steam:', player.personastate !== 0 ? 'online' : 'offline', gameInfo?.name || '');
+        // Jelenlegi játék lekérése - ez a FONTOS!
+        let gameInfo = null;
+        if (player.gameid) {
+            // Ha van gameid, akkor játékban van
+            gameInfo = {
+                id: player.gameid,
+                name: player.gameextrainfo || 'Ismeretlen játék',
+                server: player.gameserver || null
+            };
+            
+            // Ha a gameextrainfo üres, próbáljuk lekérni a nevet a gameid alapján
+            if (!player.gameextrainfo && player.gameid) {
+                try {
+                    // Alternatív játéknév lekérés (ha szükséges)
+                    const appResponse = await axios.get(
+                        `http://api.steampowered.com/ISteamApps/GetAppList/v2/`
+                    );
+                    const game = appResponse.data.applist.apps.find(app => app.appid == player.gameid);
+                    if (game) {
+                        gameInfo.name = game.name;
+                    }
+                } catch (e) {
+                    // Ha nem sikerül, marad az "Ismeretlen játék"
+                }
+            }
+        }
+        
+        console.log('✅ Steam:', statusText, gameInfo?.name || '');
+        
         return {
             online: player.personastate !== 0,
-            game: gameInfo
+            status: status,
+            statusText: statusText,
+            game: gameInfo,
+            lastLogoff: player.lastlogoff ? new Date(player.lastlogoff * 1000) : null
         };
+        
     } catch (error) {
-        console.error('❌ Steam error:', error.message);
-        return { online: false };
+        console.error('❌ Steam error:', error.response?.data || error.message);
+        return { 
+            online: false, 
+            status: 'offline', 
+            statusText: 'Offline', 
+            game: null 
+        };
     }
 }
 
