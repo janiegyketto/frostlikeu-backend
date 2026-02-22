@@ -36,53 +36,100 @@ async function getDiscordStatus() {
         
         console.log('✅ Discord bot működik, név:', botResponse.data.username);
         
-        // Most lekérjük a felhasználó jelenlétét (státuszát)
-        // Ehhez egy botnak látnia kell a felhasználót egy közös szerveren
-        const presenceResponse = await axios.get(`https://discord.com/api/v10/users/${CONFIG.discord.userId}/profile`, {
+        // Most lekérjük a felhasználó pontos státuszát
+        // Ehhez a botnak és a felhasználónak közös szerveren kell lennie!
+        const userResponse = await axios.get(`https://discord.com/api/v10/users/${CONFIG.discord.userId}/profile`, {
             headers: {
                 'Authorization': `Bot ${CONFIG.discord.botToken}`
             }
-        }).catch(err => {
-            // Ha nem sikerül a profile endpoint, próbáljuk a gateway-en keresztül
-            console.log('Profile endpoint nem elérhető, alternatív módszer...');
-            return null;
         });
-
-        // Ha sikerült a profile lekérés
-        if (presenceResponse?.data) {
-            const presence = presenceResponse.data.presence || {};
-            let activity = null;
-            
-            if (presence.activities && presence.activities.length > 0) {
-                const game = presence.activities.find(a => a.type === 0);
-                if (game) {
-                    activity = {
-                        name: game.name,
-                        details: game.details || '',
-                        state: game.state || ''
-                    };
-                }
-            }
-            
-            return {
-                online: presence.status !== 'offline' && presence.status !== null,
-                status: presence.status || 'offline',
-                activity: activity
+        
+        // A válaszban benne van a presence (jelenlét) objektum
+        const presence = userResponse.data.presence || {};
+        
+        // Státusz konvertálása magyar szövegre
+        let statusText = 'offline';
+        let statusDot = 'offline';
+        
+        switch(presence.status) {
+            case 'online':
+                statusText = 'Online';
+                statusDot = 'online';
+                break;
+            case 'idle':
+                statusText = 'Tétlen';
+                statusDot = 'idle';
+                break;
+            case 'dnd':
+                statusText = 'Ne zavarjanak';
+                statusDot = 'dnd';
+                break;
+            case 'offline':
+                statusText = 'Offline';
+                statusDot = 'offline';
+                break;
+            default:
+                statusText = presence.status || 'offline';
+                statusDot = statusText;
+        }
+        
+        // Aktivitás (játék, zene, etc.) lekérése
+        let activity = null;
+        if (presence.activities && presence.activities.length > 0) {
+            const mainActivity = presence.activities[0]; // A legelső aktivitás
+            activity = {
+                name: mainActivity.name,
+                type: mainActivity.type, // 0: Playing, 1: Streaming, 2: Listening, 3: Watching
+                details: mainActivity.details || '',
+                state: mainActivity.state || '',
+                typeText: getActivityTypeText(mainActivity.type, mainActivity.name)
             };
         }
-
-        // Alternatív módszer: ha nem sikerült a profile, akkor online státuszt adunk vissza
-        // (a bot legalább működik, de a felhasználó státusza nem elérhető)
+        
         return {
-            online: true,  // Feltételezzük, hogy online
-            status: 'online',
-            activity: null,
-            note: 'Részletes státusz nem elérhető, de a bot működik'
+            online: presence.status !== 'offline' && presence.status !== null,
+            status: presence.status || 'offline',
+            statusText: statusText,      // Magyar szöveg a státuszhoz
+            statusDot: statusDot,        // CSS osztály a pöttyhöz
+            activity: activity,
+            raw: presence                // Nyers adat (debug célra)
         };
-
+        
     } catch (error) {
         console.error('❌ Discord error (részletes):', error.response?.data || error.message);
-        return { online: false, error: true, message: error.message };
+        
+        // Ha a profile endpoint nem működik, próbáljuk meg a bot jelenlétét lekérni
+        try {
+            // Alternatív megoldás: a bot saját kapcsolatán keresztül
+            console.log('ℹ️ Alternatív Discord metódus próbálkozás...');
+            
+            // Itt jöhet egy alternatív megoldás, de ehhez gateway kapcsolat kellene
+            // Most egyszerűen visszaadjuk, hogy a bot él, de a pontos státusz nem elérhető
+            return { 
+                online: true, 
+                status: 'online',
+                statusText: 'Online (korlátozott)',
+                statusDot: 'online',
+                activity: null,
+                note: 'A pontos státusz lekéréséhez a botnak és a felhasználónak közös szerveren kell lennie'
+            };
+            
+        } catch (altError) {
+            return { online: false, error: true, message: error.message };
+        }
+    }
+}
+
+// Segédfüggvény az aktivitás típusának szöveges formájához
+function getActivityTypeText(type, name) {
+    switch(type) {
+        case 0: return `🎮 Játék: ${name}`;
+        case 1: return `📺 Streaming: ${name}`;
+        case 2: return `🎵 Hallgatás: ${name}`;
+        case 3: return `📹 Nézés: ${name}`;
+        case 4: return `⚙️ Egyéni státusz: ${name}`;
+        case 5: return `🏆 Verseny: ${name}`;
+        default: return name;
     }
 }
 
