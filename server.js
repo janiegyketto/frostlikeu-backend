@@ -7,11 +7,10 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// ========== KONFIGURÁCIÓ - A TE ADATAIDDAL ==========
+// ========== KONFIGURÁCIÓ ==========
 const CONFIG = {
     discord: {
-        userId: '526441058075148308',  // A te Discord ID-d
-        botToken: process.env.DISCORD_TOKEN
+        userId: '526441058075148308'
     },
     spotify: {
         clientId: process.env.SPOTIFY_CLIENT_ID,
@@ -20,21 +19,18 @@ const CONFIG = {
     },
     steam: {
         apiKey: process.env.STEAM_API_KEY,
-        steamId: '76561199048400403'  // A te Steam ID-d
+        steamId: '76561199048400403'
     }
 };
 
-// ========== DISCORD - JAVÍTOTT VERZIÓ ==========
 // ========== DISCORD - LANYARD API ==========
 async function getDiscordStatus() {
     try {
-        // Lanyard API hívás - nincs szükség bot tokenre!
         const response = await axios.get(`https://api.lanyard.rest/v1/users/${CONFIG.discord.userId}`);
         
         if (response.data.success) {
             const data = response.data.data;
             
-            // Státusz konvertálása
             let statusText = 'Offline';
             let statusDot = 'offline';
             let isOnline = false;
@@ -60,16 +56,10 @@ async function getDiscordStatus() {
                     statusDot = 'offline';
                     isOnline = false;
                     break;
-                default:
-                    statusText = data.discord_status || 'Offline';
-                    statusDot = 'offline';
-                    isOnline = false;
             }
             
-            // Aktivitás feldolgozása (játék, spotify stb.)
             let activity = null;
             if (data.activities && data.activities.length > 0) {
-                // Keressük meg a nem custom státuszú aktivitást
                 const gameActivity = data.activities.find(a => a.type !== 4);
                 if (gameActivity) {
                     activity = {
@@ -81,46 +71,23 @@ async function getDiscordStatus() {
                 }
             }
             
-            // Spotify adatok (ha van)
-            let spotifyActivity = null;
-            if (data.listening_to_spotify && data.spotify) {
-                spotifyActivity = {
-                    track: data.spotify.song,
-                    artist: data.spotify.artist,
-                    album: data.spotify.album,
-                    trackId: data.spotify.track_id
-                };
-            }
-            
             return {
                 online: isOnline,
                 status: data.discord_status,
                 statusText: statusText,
                 statusDot: statusDot,
-                activity: activity,
-                spotify: spotifyActivity,
-                avatar: `https://cdn.discordapp.com/avatars/${CONFIG.discord.userId}/${data.discord_user.avatar}.png`
+                activity: activity
             };
         }
         
-        return { 
-            online: false, 
-            status: 'offline', 
-            statusText: 'Offline', 
-            statusDot: 'offline' 
-        };
+        return { online: false, status: 'offline', statusText: 'Offline', statusDot: 'offline' };
         
     } catch (error) {
         console.error('❌ Lanyard error:', error.response?.data || error.message);
-        return { 
-            online: false, 
-            status: 'offline',
-            statusText: 'Offline',
-            statusDot: 'offline',
-            error: true 
-        };
+        return { online: false, status: 'offline', statusText: 'Offline', statusDot: 'offline', error: true };
     }
 }
+
 // ========== SPOTIFY ==========
 let spotifyAccessToken = null;
 let spotifyTokenExpiry = 0;
@@ -162,17 +129,18 @@ async function getSpotifyNowPlaying() {
         });
         
         if (response.data && response.data.item) {
-            console.log('✅ Spotify: most hallgatott:', response.data.item.name);
+            console.log('✅ Spotify:', response.data.item.name);
             return {
                 isPlaying: true,
                 track: response.data.item.name,
                 artist: response.data.item.artists.map(a => a.name).join(', '),
                 albumImage: response.data.item.album.images[0]?.url,
+                trackUrl: response.data.item.external_urls.spotify,
                 progress: response.data.progress_ms,
                 duration: response.data.item.duration_ms
             };
         } else {
-            console.log('ℹ️ Spotify: nem hallgat semmit');
+            console.log('ℹ️ Spotify: nincs zene');
             return { isPlaying: false };
         }
     } catch (error) {
@@ -184,7 +152,6 @@ async function getSpotifyNowPlaying() {
 // ========== STEAM ==========
 async function getSteamStatus() {
     try {
-        // Lekérjük a játékos adatait (itt van a jelenlegi játék!)
         const response = await axios.get(
             `http://api.steampowered.com/ISteamUser/GetPlayerSummaries/v0002/`,
             {
@@ -197,11 +164,9 @@ async function getSteamStatus() {
         
         const player = response.data.response.players[0];
         
-        // Státusz konvertálása
         let status = 'offline';
         let statusText = 'Offline';
         
-        // personastate: 0 - offline, 1 - online, 2 - elfoglalt, 3 - távollévő, 4 - alvó, 5 - szeretne játszani, 6 - szeretne játszani
         switch(player.personastate) {
             case 1:
                 status = 'online';
@@ -224,36 +189,14 @@ async function getSteamStatus() {
                 status = 'looking';
                 statusText = 'Szeretne játszani';
                 break;
-            default:
-                status = 'offline';
-                statusText = 'Offline';
         }
         
-        // Jelenlegi játék lekérése - ez a FONTOS!
         let gameInfo = null;
         if (player.gameid) {
-            // Ha van gameid, akkor játékban van
             gameInfo = {
                 id: player.gameid,
-                name: player.gameextrainfo || 'Ismeretlen játék',
-                server: player.gameserver || null
+                name: player.gameextrainfo || 'Játékban'
             };
-            
-            // Ha a gameextrainfo üres, próbáljuk lekérni a nevet a gameid alapján
-            if (!player.gameextrainfo && player.gameid) {
-                try {
-                    // Alternatív játéknév lekérés (ha szükséges)
-                    const appResponse = await axios.get(
-                        `http://api.steampowered.com/ISteamApps/GetAppList/v2/`
-                    );
-                    const game = appResponse.data.applist.apps.find(app => app.appid == player.gameid);
-                    if (game) {
-                        gameInfo.name = game.name;
-                    }
-                } catch (e) {
-                    // Ha nem sikerül, marad az "Ismeretlen játék"
-                }
-            }
         }
         
         console.log('✅ Steam:', statusText, gameInfo?.name || '');
@@ -262,31 +205,115 @@ async function getSteamStatus() {
             online: player.personastate !== 0,
             status: status,
             statusText: statusText,
-            game: gameInfo,
-            lastLogoff: player.lastlogoff ? new Date(player.lastlogoff * 1000) : null
+            game: gameInfo
         };
         
     } catch (error) {
-        console.error('❌ Steam error:', error.response?.data || error.message);
-        return { 
-            online: false, 
-            status: 'offline', 
-            statusText: 'Offline', 
-            game: null 
-        };
+        console.error('❌ Steam error:', error.message);
+        return { online: false, status: 'offline', statusText: 'Offline', game: null };
+    }
+}
+
+// ========== STATS FÜGGVÉNYEK ==========
+
+async function getSteamMonthlyStats() {
+    try {
+        const gamesResponse = await axios.get(
+            `http://api.steampowered.com/IPlayerService/GetRecentlyPlayedGames/v0001/`,
+            {
+                params: {
+                    key: CONFIG.steam.apiKey,
+                    steamid: CONFIG.steam.steamId,
+                    count: 10
+                }
+            }
+        );
+        
+        const games = gamesResponse.data.response;
+        if (games.total_count > 0) {
+            const totalPlaytime = games.games.reduce((sum, game) => 
+                sum + (game.playtime_2weeks || 0), 0) / 60;
+            
+            const topGame = games.games.sort((a, b) => 
+                (b.playtime_2weeks || 0) - (a.playtime_2weeks || 0)
+            )[0];
+            
+            return {
+                totalHours: Math.round(totalPlaytime * 10) / 10,
+                topGame: topGame ? {
+                    name: topGame.name,
+                    hours: Math.round(((topGame.playtime_2weeks || 0) / 60) * 10) / 10
+                } : null,
+                gamesCount: games.total_count
+            };
+        }
+        return null;
+    } catch (error) {
+        console.error('Steam stats error:', error.message);
+        return null;
+    }
+}
+
+async function getSpotifyMonthlyStats() {
+    try {
+        if (!spotifyAccessToken || Date.now() >= spotifyTokenExpiry) {
+            await refreshSpotifyToken();
+        }
+        
+        const response = await axios.get('https://api.spotify.com/v1/me/player/recently-played?limit=50', {
+            headers: {
+                'Authorization': `Bearer ${spotifyAccessToken}`
+            }
+        });
+        
+        const tracks = response.data.items;
+        if (tracks.length > 0) {
+            const artistCount = {};
+            tracks.forEach(item => {
+                item.track.artists.forEach(artist => {
+                    artistCount[artist.name] = (artistCount[artist.name] || 0) + 1;
+                });
+            });
+            
+            const topArtist = Object.entries(artistCount)
+                .sort((a, b) => b[1] - a[1])[0];
+            
+            return {
+                totalTracks: tracks.length,
+                topArtist: topArtist ? {
+                    name: topArtist[0],
+                    count: topArtist[1]
+                } : null,
+                uniqueArtists: Object.keys(artistCount).length
+            };
+        }
+        return null;
+    } catch (error) {
+        console.error('Spotify stats error:', error.message);
+        return null;
     }
 }
 
 // ========== API VÉGPONT ==========
 app.get('/api/status', async (req, res) => {
     console.log('📊 Status lekérés...');
-    const [discord, spotify, steam] = await Promise.all([
+    const [discord, spotify, steam, steamStats, spotifyStats] = await Promise.all([
         getDiscordStatus(),
         getSpotifyNowPlaying(),
-        getSteamStatus()
+        getSteamStatus(),
+        getSteamMonthlyStats(),
+        getSpotifyMonthlyStats()
     ]);
     
-    res.json({ discord, spotify, steam });
+    res.json({ 
+        discord, 
+        spotify, 
+        steam,
+        stats: {
+            steam: steamStats,
+            spotify: spotifyStats
+        }
+    });
 });
 
 // ========== INDÍTÁS ==========
