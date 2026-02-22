@@ -25,114 +25,102 @@ const CONFIG = {
 };
 
 // ========== DISCORD - JAVÍTOTT VERZIÓ ==========
+// ========== DISCORD - LANYARD API ==========
 async function getDiscordStatus() {
     try {
-        // Először lekérjük a bot saját adatait (ez teszteli a tokent)
-        const botResponse = await axios.get('https://discord.com/api/v10/users/@me', {
-            headers: {
-                'Authorization': `Bot ${CONFIG.discord.botToken}`
+        // Lanyard API hívás - nincs szükség bot tokenre!
+        const response = await axios.get(`https://api.lanyard.rest/v1/users/${CONFIG.discord.userId}`);
+        
+        if (response.data.success) {
+            const data = response.data.data;
+            
+            // Státusz konvertálása
+            let statusText = 'Offline';
+            let statusDot = 'offline';
+            let isOnline = false;
+            
+            switch(data.discord_status) {
+                case 'online':
+                    statusText = 'Online';
+                    statusDot = 'online';
+                    isOnline = true;
+                    break;
+                case 'idle':
+                    statusText = 'Tétlen';
+                    statusDot = 'idle';
+                    isOnline = true;
+                    break;
+                case 'dnd':
+                    statusText = 'Ne zavarjanak';
+                    statusDot = 'dnd';
+                    isOnline = true;
+                    break;
+                case 'offline':
+                    statusText = 'Offline';
+                    statusDot = 'offline';
+                    isOnline = false;
+                    break;
+                default:
+                    statusText = data.discord_status || 'Offline';
+                    statusDot = 'offline';
+                    isOnline = false;
             }
-        });
-        
-        console.log('✅ Discord bot működik, név:', botResponse.data.username);
-        
-        // Most lekérjük a felhasználó pontos státuszát
-        // Ehhez a botnak és a felhasználónak közös szerveren kell lennie!
-        const userResponse = await axios.get(`https://discord.com/api/v10/users/${CONFIG.discord.userId}/profile`, {
-            headers: {
-                'Authorization': `Bot ${CONFIG.discord.botToken}`
+            
+            // Aktivitás feldolgozása (játék, spotify stb.)
+            let activity = null;
+            if (data.activities && data.activities.length > 0) {
+                // Keressük meg a nem custom státuszú aktivitást
+                const gameActivity = data.activities.find(a => a.type !== 4);
+                if (gameActivity) {
+                    activity = {
+                        name: gameActivity.name,
+                        type: gameActivity.type,
+                        details: gameActivity.details || '',
+                        state: gameActivity.state || ''
+                    };
+                }
             }
-        });
-        
-        // A válaszban benne van a presence (jelenlét) objektum
-        const presence = userResponse.data.presence || {};
-        
-        // Státusz konvertálása magyar szövegre
-        let statusText = 'offline';
-        let statusDot = 'offline';
-        
-        switch(presence.status) {
-            case 'online':
-                statusText = 'Online';
-                statusDot = 'online';
-                break;
-            case 'idle':
-                statusText = 'Tétlen';
-                statusDot = 'idle';
-                break;
-            case 'dnd':
-                statusText = 'Ne zavarjanak';
-                statusDot = 'dnd';
-                break;
-            case 'offline':
-                statusText = 'Offline';
-                statusDot = 'offline';
-                break;
-            default:
-                statusText = presence.status || 'offline';
-                statusDot = statusText;
-        }
-        
-        // Aktivitás (játék, zene, etc.) lekérése
-        let activity = null;
-        if (presence.activities && presence.activities.length > 0) {
-            const mainActivity = presence.activities[0]; // A legelső aktivitás
-            activity = {
-                name: mainActivity.name,
-                type: mainActivity.type, // 0: Playing, 1: Streaming, 2: Listening, 3: Watching
-                details: mainActivity.details || '',
-                state: mainActivity.state || '',
-                typeText: getActivityTypeText(mainActivity.type, mainActivity.name)
+            
+            // Spotify adatok (ha van)
+            let spotifyActivity = null;
+            if (data.listening_to_spotify && data.spotify) {
+                spotifyActivity = {
+                    track: data.spotify.song,
+                    artist: data.spotify.artist,
+                    album: data.spotify.album,
+                    trackId: data.spotify.track_id
+                };
+            }
+            
+            return {
+                online: isOnline,
+                status: data.discord_status,
+                statusText: statusText,
+                statusDot: statusDot,
+                activity: activity,
+                spotify: spotifyActivity,
+                avatar: `https://cdn.discordapp.com/avatars/${CONFIG.discord.userId}/${data.discord_user.avatar}.png`
             };
         }
         
-        return {
-            online: presence.status !== 'offline' && presence.status !== null,
-            status: presence.status || 'offline',
-            statusText: statusText,      // Magyar szöveg a státuszhoz
-            statusDot: statusDot,        // CSS osztály a pöttyhöz
-            activity: activity,
-            raw: presence                // Nyers adat (debug célra)
+        return { 
+            online: false, 
+            status: 'offline', 
+            statusText: 'Offline', 
+            statusDot: 'offline' 
         };
         
     } catch (error) {
-        console.error('❌ Discord error (részletes):', error.response?.data || error.message);
-        
-        // Ha a profile endpoint nem működik, próbáljuk meg a bot jelenlétét lekérni
-        try {
-            // Alternatív megoldás: a bot saját kapcsolatán keresztül
-            console.log('ℹ️ Alternatív Discord metódus próbálkozás...');
-            
-            // Itt jöhet egy alternatív megoldás, de ehhez gateway kapcsolat kellene
-            // Most egyszerűen visszaadjuk, hogy a bot él, de a pontos státusz nem elérhető
-            return { 
-                online: true, 
-                status: 'online',
-                statusText: 'Online (korlátozott)',
-                statusDot: 'online',
-                activity: null,
-                note: 'A pontos státusz lekéréséhez a botnak és a felhasználónak közös szerveren kell lennie'
-            };
-            
-        } catch (altError) {
-            return { online: false, error: true, message: error.message };
-        }
+        console.error('❌ Lanyard error:', error.response?.data || error.message);
+        return { 
+            online: false, 
+            status: 'offline',
+            statusText: 'Offline',
+            statusDot: 'offline',
+            error: true 
+        };
     }
 }
-
-// Segédfüggvény az aktivitás típusának szöveges formájához
-function getActivityTypeText(type, name) {
-    switch(type) {
-        case 0: return `🎮 Játék: ${name}`;
-        case 1: return `📺 Streaming: ${name}`;
-        case 2: return `🎵 Hallgatás: ${name}`;
-        case 3: return `📹 Nézés: ${name}`;
-        case 4: return `⚙️ Egyéni státusz: ${name}`;
-        case 5: return `🏆 Verseny: ${name}`;
-        default: return name;
-    }
-}
-
 // ========== SPOTIFY ==========
 let spotifyAccessToken = null;
 let spotifyTokenExpiry = 0;
@@ -305,5 +293,4 @@ app.get('/api/status', async (req, res) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
-    console.log(`📝 API elérhető: http://localhost:${PORT}/api/status`);
 });
